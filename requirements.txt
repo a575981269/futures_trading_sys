@@ -1,0 +1,23 @@
+# 中国期货量化系统依赖包
+
+# CTP接口
+vnpy-ctp>=3.9.0
+
+# 数据库
+SQLAlchemy>=2.0.0
+sqlalchemy-utils>=0.41.0
+
+# 数据处理
+pandas>=2.0.0
+numpy>=1.24.0
+
+# 配置管理
+python-dotenv>=1.0.0
+configparser>=6.0.0
+
+# 日志
+colorlog>=6.7.0
+
+# 工具类
+python-dateutil>=2.8.2
+
