@@ -28,8 +28,8 @@ class KlineData(Base):
     
     # 创建复合索引，优化查询性能
     __table_args__ = (
-        Index('idx_symbol_interval_datetime', 'symbol', 'interval', 'datetime'),
-        Index('idx_datetime', 'datetime'),
+        Index('idx_kline_symbol_interval_datetime', 'symbol', 'interval', 'datetime'),
+        Index('idx_kline_datetime', 'datetime'),
     )
     
     def __repr__(self):
@@ -55,8 +55,8 @@ class TickData(Base):
     
     # 创建复合索引
     __table_args__ = (
-        Index('idx_symbol_datetime', 'symbol', 'datetime'),
-        Index('idx_datetime', 'datetime'),
+        Index('idx_tick_symbol_datetime', 'symbol', 'datetime'),
+        Index('idx_tick_datetime', 'datetime'),
     )
     
     def __repr__(self):

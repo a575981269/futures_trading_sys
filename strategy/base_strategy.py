@@ -190,4 +190,40 @@ class BaseStrategy(ABC):
             msg: 日志消息
         """
         logger.info(f"[{self.name}] {msg}")
+    
+    def on_order_status(self, order):
+        """
+        订单状态更新回调（可选实现）
+        
+        Args:
+            order: 订单对象
+        """
+        pass
+    
+    def on_trade(self, order):
+        """
+        订单成交回调（可选实现）
+        
+        Args:
+            order: 订单对象
+        """
+        pass
+    
+    def on_position_update(self, position):
+        """
+        持仓更新回调（可选实现）
+        
+        Args:
+            position: 持仓对象
+        """
+        pass
+    
+    def get_risk_params(self) -> Dict[str, Any]:
+        """
+        获取风控参数（可选实现）
+        
+        Returns:
+            风控参数字典
+        """
+        return {}
 

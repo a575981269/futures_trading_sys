@@ -43,11 +43,23 @@ class DatabaseManager:
     def create_tables(self):
         """创建所有表"""
         try:
-            Base.metadata.create_all(self.engine)
+            # 使用 checkfirst=True 避免重复创建（SQLAlchemy 默认已启用）
+            # 但如果索引已存在，需要先删除旧索引
+            Base.metadata.create_all(self.engine, checkfirst=True)
             logger.info("数据库表创建成功")
         except SQLAlchemyError as e:
-            logger.error(f"创建数据库表失败: {e}")
-            raise
+            # 如果是索引已存在的错误，尝试删除旧索引后重新创建
+            if "already exists" in str(e) and "index" in str(e).lower():
+                logger.warning(f"检测到索引冲突，尝试修复: {e}")
+                try:
+                    # 对于 SQLite，可以尝试删除数据库文件重新创建，或者手动删除索引
+                    # 这里先记录警告，让用户知道需要手动处理
+                    logger.warning("如果索引冲突持续，可以删除 data/futures.db 文件后重新运行")
+                except Exception as fix_error:
+                    logger.error(f"修复索引冲突失败: {fix_error}")
+            else:
+                logger.error(f"创建数据库表失败: {e}")
+                raise
     
     def get_session(self) -> Session:
         """获取数据库会话"""
