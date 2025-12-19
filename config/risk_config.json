@@ -1,0 +1,15 @@
+{
+  "default": {
+    "max_position_per_symbol": 10,
+    "max_total_positions": 5,
+    "max_position_value_ratio": 0.3,
+    "max_order_amount": 100000.0,
+    "max_daily_loss": 50000.0,
+    "max_daily_loss_ratio": 0.1,
+    "min_available_ratio": 0.2,
+    "max_orders_per_minute": 10,
+    "max_orders_per_symbol_per_minute": 5,
+    "max_price_deviation_ratio": 0.05,
+    "enable_risk_control": true
+  }
+}

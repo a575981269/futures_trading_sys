@@ -53,12 +53,26 @@ class RiskManager:
         Returns:
             风控结果
         """
+        # #region agent log
+        import json
+        try:
+            with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"risk_manager.py:check_order_risk","message":"Risk check started","data":{"symbol":order.symbol,"enable_risk_control":self.enable_risk_control,"has_order_limit":self.order_limit is not None,"has_capital_limit":self.capital_limit is not None,"has_position_limit":self.position_limit is not None,"current_price":current_price},"timestamp":int(__import__('time').time()*1000)})+'\n')
+        except: pass
+        # #endregion
+        
         if not self.enable_risk_control:
             return RiskResult.safe("风控已禁用")
         
         # 订单限制检查
         if self.order_limit:
             result = self.order_limit.check_order_risk(order, current_price)
+            # #region agent log
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"risk_manager.py:check_order_risk","message":"Order limit check result","data":{"passed":result.passed,"reason":result.reason},"timestamp":int(__import__('time').time()*1000)})+'\n')
+            except: pass
+            # #endregion
             if not result.passed:
                 logger.warning(f"订单风控失败: {result.reason}")
                 return result

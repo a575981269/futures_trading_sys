@@ -10,6 +10,7 @@ from trading.trading_interface import TradingInterface
 from trading.order import Order, OrderType, OrderDirection
 from strategy.base_strategy import BaseStrategy
 from risk.risk_manager import RiskManager
+from backtest.portfolio import Position
 from database.models import TickData, KlineData
 from utils.logger import get_logger
 
@@ -22,6 +23,7 @@ class LiveTrader:
     def __init__(self,
                  trading_interface: Optional[TradingInterface] = None,
                  risk_manager: Optional[RiskManager] = None,
+                 market_data: Optional[Any] = None,
                  auto_sync: bool = True,
                  sync_interval: int = 60):
         """
@@ -30,6 +32,7 @@ class LiveTrader:
         Args:
             trading_interface: 交易接口，如果为None则创建CTP交易接口
             risk_manager: 风控管理器
+            market_data: 行情数据接口（用于获取当前价格）
             auto_sync: 是否自动同步账户和持仓
             sync_interval: 同步间隔（秒）
         """
@@ -43,6 +46,13 @@ class LiveTrader:
         
         # 风控管理器
         self.risk_manager = risk_manager
+        
+        # 行情数据接口（用于获取当前价格）
+        self.market_data = market_data
+        
+        # 价格缓存（从Tick数据中获取）
+        self._price_cache: Dict[str, float] = {}  # {symbol: price}
+        self._price_cache_time: Dict[str, datetime] = {}  # {symbol: time}
         
         # 策略
         self.strategy: Optional[BaseStrategy] = None
@@ -180,13 +190,47 @@ class LiveTrader:
         
         # 风控检查
         if self.risk_manager:
-            # 获取当前价格（需要从行情接口获取）
+            # 获取当前价格
             current_price = self._get_current_price(symbol)
+            # #region agent log
+            import json
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"live_trader.py:_submit_order","message":"Getting current price for risk check","data":{"symbol":symbol,"current_price":current_price},"timestamp":int(__import__('time').time()*1000)})+'\n')
+            except: pass
+            # #endregion
             
-            # 使用模拟组合进行风控检查（实际应该使用实盘账户信息）
-            from backtest.portfolio import Portfolio
-            portfolio = Portfolio()
+            # 使用实盘账户进行风控检查
+            # 创建账户适配器（将LiveAccount转换为Portfolio格式）
+            try:
+                from risk.risk_adapter import LiveAccountAdapter
+                adapter = LiveAccountAdapter(self.account)
+                portfolio = adapter.to_portfolio()
+                # #region agent log
+                try:
+                    with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"live_trader.py:_submit_order","message":"Created LiveAccountAdapter","data":{"portfolio_initial_capital":portfolio.initial_capital,"portfolio_current_capital":portfolio.current_capital},"timestamp":int(__import__('time').time()*1000)})+'\n')
+                except: pass
+                # #endregion
+            except ImportError:
+                # 如果适配器不存在，使用模拟Portfolio
+                logger.warning("风控适配器未找到，使用模拟Portfolio进行风控检查")
+                from backtest.portfolio import Portfolio
+                portfolio = Portfolio()
+                # #region agent log
+                try:
+                    with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"live_trader.py:_submit_order","message":"Using fallback Portfolio","data":{},"timestamp":int(__import__('time').time()*1000)})+'\n')
+                except: pass
+                # #endregion
+            
             result = self.risk_manager.check_order_risk(order, portfolio, current_price)
+            # #region agent log
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"live_trader.py:_submit_order","message":"Risk check result","data":{"passed":result.passed,"level":result.level.value if result.level else None,"message":result.message},"timestamp":int(__import__('time').time()*1000)})+'\n')
+            except: pass
+            # #endregion
             
             if not result.passed:
                 logger.warning(f"订单风控失败: {result.reason}")
@@ -204,8 +248,40 @@ class LiveTrader:
         return order_id
     
     def _get_current_price(self, symbol: str) -> Optional[float]:
-        """获取当前价格（需要从行情接口获取）"""
-        # TODO: 从行情接口获取当前价格
+        """
+        获取当前价格
+        
+        Args:
+            symbol: 合约代码
+            
+        Returns:
+            当前价格，如果无法获取返回None
+        """
+        # 优先从价格缓存获取（最近5秒内的价格）
+        if symbol in self._price_cache:
+            cache_time = self._price_cache_time.get(symbol)
+            if cache_time:
+                time_diff = (datetime.now() - cache_time).total_seconds()
+                if time_diff < 5:
+                    return self._price_cache[symbol]
+        
+        # 从持仓中获取价格
+        position = self.account.get_position(symbol)
+        if position and position.current_price > 0:
+            return position.current_price
+        
+        # 从行情接口获取（如果有）
+        if self.market_data and hasattr(self.market_data, 'get_last_price'):
+            try:
+                price = self.market_data.get_last_price(symbol)
+                if price:
+                    self._price_cache[symbol] = price
+                    self._price_cache_time[symbol] = datetime.now()
+                    return price
+            except Exception as e:
+                logger.warning(f"从行情接口获取价格失败: {e}")
+        
+        logger.warning(f"无法获取合约价格: {symbol}")
         return None
     
     def cancel_order(self, order_id: str) -> bool:
@@ -245,6 +321,16 @@ class LiveTrader:
     
     def on_tick(self, tick: TickData):
         """Tick数据回调"""
+        # 更新价格缓存（无论是否有策略都要更新）
+        self._price_cache[tick.symbol] = tick.last_price
+        self._price_cache_time[tick.symbol] = tick.datetime
+        
+        # 更新持仓价格
+        position = self.account.get_position(tick.symbol)
+        if position:
+            position.update_price(tick.last_price)
+        
+        # 如果没有策略或策略未激活，只更新价格缓存
         if not self.strategy or not self.strategy.is_active:
             return
         
