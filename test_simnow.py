@@ -39,7 +39,7 @@ def test_connection():
             print("  - CTP_PASSWORD (交易密码) - 请在 .env 文件中设置")
         return False
     
-    print("\n✅ 配置验证通过")
+    print("\n[OK] 配置验证通过")
     return True
 
 
@@ -54,11 +54,25 @@ def test_market_data():
         
         # 定义Tick回调
         def on_tick(tick):
-            print(f"📊 Tick: {tick.symbol}, 价格={tick.last_price}, 时间={tick.datetime}")
+            # #region agent log
+            import json
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"test_simnow.py:56","message":"on_tick callback EXECUTED - REAL DATA RECEIVED","data":{"symbol":tick.symbol,"price":tick.last_price},"timestamp":int(__import__('time').time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            print(f"[TICK] {tick.symbol}, 价格={tick.last_price}, 时间={tick.datetime}")
         
         # 定义K线回调
         def on_bar(bar):
-            print(f"📈 K线: {bar.symbol}, 收盘={bar.close}, 时间={bar.datetime}")
+            # #region agent log
+            import json
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"test_simnow.py:61","message":"on_bar callback EXECUTED - REAL DATA RECEIVED","data":{"symbol":bar.symbol,"close":bar.close},"timestamp":int(__import__('time').time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            print(f"[KLINE] {bar.symbol}, 收盘={bar.close}, 时间={bar.datetime}")
         
         # 注册回调
         realtime.register_tick_callback(on_tick)
@@ -67,35 +81,50 @@ def test_market_data():
         # 连接
         print("\n正在连接行情服务器...")
         if realtime.connect():
-            print("✅ 行情服务器连接成功")
+            print("[OK] 行情服务器连接成功")
             
             # 订阅测试合约（螺纹钢主力合约）
             test_symbol = "rb2601"  # 可以根据实际情况修改
             print(f"\n正在订阅合约: {test_symbol}")
             if realtime.subscribe(test_symbol):
-                print(f"✅ 合约订阅成功: {test_symbol}")
+                print(f"[OK] 合约订阅成功: {test_symbol}")
                 print("\n等待行情数据... (按Ctrl+C退出)")
+                print("注意：当前使用模拟数据（框架代码未实现真实CTP连接）")
+                print("要连接真实SimNow，需要实现CTP接口或使用vnpy-ctp等库\n")
                 
                 try:
+                    # #region agent log
+                    import json
+                    try:
+                        with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"test_simnow.py:79","message":"Waiting for market data, checking if callbacks will be triggered","data":{"subscribed_symbols":realtime.subscribed_symbols,"tick_callbacks_count":len(realtime.tick_callbacks)},"timestamp":int(__import__('time').time()*1000)})+'\n')
+                    except: pass
+                    # #endregion
                     # 等待一段时间接收数据
                     time.sleep(30)
+                    # #region agent log
+                    try:
+                        with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"test_simnow.py:87","message":"Finished waiting, no callbacks were triggered","data":{},"timestamp":int(__import__('time').time()*1000)})+'\n')
+                    except: pass
+                    # #endregion
                 except KeyboardInterrupt:
                     print("\n\n用户中断")
                 
                 realtime.unsubscribe(test_symbol)
             else:
-                print(f"❌ 合约订阅失败: {test_symbol}")
+                print(f"[ERROR] 合约订阅失败: {test_symbol}")
             
             realtime.disconnect()
-            print("\n✅ 已断开行情连接")
+            print("\n[OK] 已断开行情连接")
         else:
-            print("❌ 行情服务器连接失败")
+            print("[ERROR] 行情服务器连接失败")
             return False
         
         return True
         
     except Exception as e:
-        print(f"\n❌ 行情接口测试失败: {e}")
+        print(f"\n[ERROR] 行情接口测试失败: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -125,35 +154,35 @@ def test_trading():
         # 连接
         print("\n正在连接交易服务器...")
         if trader.connect():
-            print("✅ 交易服务器连接成功")
+            print("[OK] 交易服务器连接成功")
             
             # 查询账户
             print("\n查询账户信息...")
             account_info = trader.query_account()
             if account_info:
-                print("✅ 账户信息:")
+                print("[OK] 账户信息:")
                 for key, value in account_info.items():
                     print(f"  {key}: {value}")
             else:
-                print("⚠️  账户信息为空（可能是模拟环境限制）")
+                print("[WARNING] 账户信息为空（可能是模拟环境限制）")
             
             # 查询持仓
             print("\n查询持仓...")
             positions = trader.query_positions()
-            print(f"✅ 持仓数量: {len(positions)}")
+            print(f"[OK] 持仓数量: {len(positions)}")
             for pos in positions:
                 print(f"  {pos.symbol}: {pos.volume}手, {pos.direction}")
             
             trader.disconnect()
-            print("\n✅ 已断开交易连接")
+            print("\n[OK] 已断开交易连接")
         else:
-            print("❌ 交易服务器连接失败")
+            print("[ERROR] 交易服务器连接失败")
             return False
         
         return True
         
     except Exception as e:
-        print(f"\n❌ 交易接口测试失败: {e}")
+        print(f"\n[ERROR] 交易接口测试失败: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -179,21 +208,10 @@ def main():
     if len(sys.argv) > 1:
         test_type = sys.argv[1].lower()
     else:
-        print("\n请选择测试项目:")
-        print("1. 测试行情接口 (market)")
-        print("2. 测试交易接口 (trading)")
-        print("3. 全部测试 (all)")
-        choice = input("\n请输入选项 (1/2/3): ").strip()
-        
-        if choice == "1":
-            test_type = "market"
-        elif choice == "2":
-            test_type = "trading"
-        elif choice == "3":
-            test_type = "all"
-        else:
-            print("无效选项")
-            return
+        # 默认运行全部测试
+        test_type = "all"
+        print("\n使用默认选项: 全部测试 (all)")
+        print("提示: 可以使用参数指定测试类型: python test_simnow.py [market|trading|all]")
     
     # 执行测试
     results = []
@@ -209,7 +227,7 @@ def main():
     print("测试结果汇总")
     print("=" * 60)
     for name, result in results:
-        status = "✅ 通过" if result else "❌ 失败"
+        status = "[OK] 通过" if result else "[ERROR] 失败"
         print(f"{name}: {status}")
     print("=" * 60)
 

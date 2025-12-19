@@ -71,7 +71,27 @@ class DatabaseManager:
         """保存单条K线数据"""
         session = self.get_session()
         try:
-            session.add(kline_data)
+            # 如果对象已经绑定到另一个会话，需要先分离
+            # 或者创建一个新的对象实例
+            from sqlalchemy.orm import object_session
+            if object_session(kline_data) is not None:
+                # 对象已绑定到另一个会话，创建新实例
+                new_kline = KlineData(
+                    symbol=kline_data.symbol,
+                    exchange=kline_data.exchange,
+                    datetime=kline_data.datetime,
+                    interval=kline_data.interval,
+                    open=kline_data.open,
+                    high=kline_data.high,
+                    low=kline_data.low,
+                    close=kline_data.close,
+                    volume=kline_data.volume,
+                    open_interest=kline_data.open_interest,
+                    turnover=kline_data.turnover
+                )
+                session.add(new_kline)
+            else:
+                session.add(kline_data)
             session.commit()
             return True
         except SQLAlchemyError as e:
@@ -154,7 +174,27 @@ class DatabaseManager:
         """保存单条Tick数据"""
         session = self.get_session()
         try:
-            session.add(tick_data)
+            # 如果对象已经绑定到另一个会话，需要先分离
+            # 或者创建一个新的对象实例
+            from sqlalchemy.orm import object_session
+            if object_session(tick_data) is not None:
+                # 对象已绑定到另一个会话，创建新实例
+                new_tick = TickData(
+                    symbol=tick_data.symbol,
+                    exchange=tick_data.exchange,
+                    datetime=tick_data.datetime,
+                    last_price=tick_data.last_price,
+                    volume=tick_data.volume,
+                    open_interest=tick_data.open_interest,
+                    bid_price1=tick_data.bid_price1,
+                    bid_volume1=tick_data.bid_volume1,
+                    ask_price1=tick_data.ask_price1,
+                    ask_volume1=tick_data.ask_volume1,
+                    turnover=tick_data.turnover
+                )
+                session.add(new_tick)
+            else:
+                session.add(tick_data)
             session.commit()
             return True
         except SQLAlchemyError as e:
