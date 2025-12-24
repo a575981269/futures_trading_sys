@@ -50,15 +50,29 @@ def test_market_data():
     print("=" * 60)
     
     try:
+        # #region agent log
+        import json
+        try:
+            with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"test_simnow.py:test_market_data","message":"Starting market data test","data":{},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
+        
         realtime = CTPRealtimeData(auto_save=True)
+        
+        # #region agent log
+        try:
+            with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"test_simnow.py:test_market_data","message":"CTPRealtimeData created","data":{"is_connected":realtime.is_connected},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
         
         # 定义Tick回调
         def on_tick(tick):
             # #region agent log
-            import json
             try:
                 with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"test_simnow.py:56","message":"on_tick callback EXECUTED - REAL DATA RECEIVED","data":{"symbol":tick.symbol,"price":tick.last_price},"timestamp":int(__import__('time').time()*1000)})+'\n')
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"test_simnow.py:on_tick","message":"Tick callback EXECUTED - REAL DATA","data":{"symbol":tick.symbol,"price":tick.last_price},"timestamp":int(time.time()*1000)})+'\n')
             except: pass
             # #endregion
             print(f"[TICK] {tick.symbol}, 价格={tick.last_price}, 时间={tick.datetime}")
@@ -66,10 +80,9 @@ def test_market_data():
         # 定义K线回调
         def on_bar(bar):
             # #region agent log
-            import json
             try:
                 with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"test_simnow.py:61","message":"on_bar callback EXECUTED - REAL DATA RECEIVED","data":{"symbol":bar.symbol,"close":bar.close},"timestamp":int(__import__('time').time()*1000)})+'\n')
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"test_simnow.py:on_bar","message":"Bar callback EXECUTED - REAL DATA","data":{"symbol":bar.symbol,"close":bar.close},"timestamp":int(time.time()*1000)})+'\n')
             except: pass
             # #endregion
             print(f"[KLINE] {bar.symbol}, 收盘={bar.close}, 时间={bar.datetime}")
@@ -80,34 +93,53 @@ def test_market_data():
         
         # 连接
         print("\n正在连接行情服务器...")
-        if realtime.connect():
+        # #region agent log
+        try:
+            with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"test_simnow.py:test_market_data","message":"Calling connect()","data":{"md_address":settings.CTP_MD_ADDRESS},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
+        
+        connect_result = realtime.connect()
+        
+        # #region agent log
+        try:
+            with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"test_simnow.py:test_market_data","message":"connect() returned","data":{"result":connect_result,"is_connected":realtime.is_connected},"timestamp":int(time.time()*1000)})+'\n')
+        except: pass
+        # #endregion
+        
+        if connect_result:
             print("[OK] 行情服务器连接成功")
             
             # 订阅测试合约（螺纹钢主力合约）
             test_symbol = "rb2601"  # 可以根据实际情况修改
             print(f"\n正在订阅合约: {test_symbol}")
-            if realtime.subscribe(test_symbol):
+            
+            # #region agent log
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"test_simnow.py:test_market_data","message":"Calling subscribe()","data":{"symbol":test_symbol},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            
+            subscribe_result = realtime.subscribe(test_symbol)
+            
+            # #region agent log
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"test_simnow.py:test_market_data","message":"subscribe() returned","data":{"result":subscribe_result,"subscribed_symbols":realtime.subscribed_symbols},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            
+            if subscribe_result:
                 print(f"[OK] 合约订阅成功: {test_symbol}")
                 print("\n等待行情数据... (按Ctrl+C退出)")
-                print("注意：当前使用模拟数据（框架代码未实现真实CTP连接）")
-                print("要连接真实SimNow，需要实现CTP接口或使用vnpy-ctp等库\n")
+                print("注意：当前使用SimNow真实行情数据\n")
                 
                 try:
-                    # #region agent log
-                    import json
-                    try:
-                        with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"test_simnow.py:79","message":"Waiting for market data, checking if callbacks will be triggered","data":{"subscribed_symbols":realtime.subscribed_symbols,"tick_callbacks_count":len(realtime.tick_callbacks)},"timestamp":int(__import__('time').time()*1000)})+'\n')
-                    except: pass
-                    # #endregion
                     # 等待一段时间接收数据
                     time.sleep(30)
-                    # #region agent log
-                    try:
-                        with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"test_simnow.py:87","message":"Finished waiting, no callbacks were triggered","data":{},"timestamp":int(__import__('time').time()*1000)})+'\n')
-                    except: pass
-                    # #endregion
                 except KeyboardInterrupt:
                     print("\n\n用户中断")
                 

@@ -17,11 +17,16 @@ logger = get_logger(__name__)
 
 # 尝试导入vnpy-ctp
 try:
-    from vnpy.gateway.ctp import CtpGateway
+    from vnpy_ctp import CtpGateway
     VNPY_CTP_AVAILABLE = True
 except ImportError:
-    VNPY_CTP_AVAILABLE = False
-    logger.warning("vnpy-ctp未安装，将使用模拟模式")
+    try:
+        # 尝试备用导入路径
+        from vnpy.gateway.ctp import CtpGateway
+        VNPY_CTP_AVAILABLE = True
+    except ImportError:
+        VNPY_CTP_AVAILABLE = False
+        logger.error("vnpy-ctp未安装或依赖缺失，请运行: pip install vnpy vnpy-ctp")
 
 
 class CTPTrader(TradingInterface):
@@ -50,9 +55,11 @@ class CTPTrader(TradingInterface):
         self._connected = False
         self._lock = Lock()
         
-        # CTP API对象（vnpy-ctp或模拟模式）
+        # CTP API对象（vnpy-ctp）
         self._ctp_api = None
-        self._use_simulation = not VNPY_CTP_AVAILABLE
+        
+        if not VNPY_CTP_AVAILABLE:
+            logger.error("vnpy-ctp未安装，无法使用SimNow模拟环境。请运行: pip install vnpy-ctp")
         
         # 订单管理
         self.orders: Dict[str, Order] = {}  # {order_id: Order}
@@ -75,7 +82,7 @@ class CTPTrader(TradingInterface):
         self._position_query_event = Event()
         self._order_query_event = Event()
         
-        logger.info(f"CTP交易接口初始化完成 (模拟模式={'是' if self._use_simulation else '否'})")
+        logger.info("CTP交易接口初始化完成（SimNow模拟环境）")
     
     def connect(self) -> bool:
         """
@@ -84,68 +91,39 @@ class CTPTrader(TradingInterface):
         Returns:
             是否连接成功
         """
-        # #region agent log
-        import json
-        try:
-            with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"ctp_trader.py:80","message":"connect() called","data":{"_connected":self._connected,"_use_simulation":self._use_simulation,"trade_address":self.trade_address},"timestamp":int(time.time()*1000)})+'\n')
-        except: pass
-        # #endregion
-        
         with self._lock:
             if self._connected:
                 logger.warning("CTP交易接口已连接")
                 return True
             
+            if not VNPY_CTP_AVAILABLE:
+                logger.error("vnpy-ctp未安装，无法连接SimNow")
+                return False
+            
             try:
-                if self._use_simulation:
-                    # 模拟模式：直接连接成功
-                    logger.info("使用模拟模式连接CTP交易接口")
-                    # #region agent log
-                    try:
-                        with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"ctp_trader.py:93","message":"Using simulation mode","data":{"_use_simulation":self._use_simulation},"timestamp":int(time.time()*1000)})+'\n')
-                    except: pass
-                    # #endregion
-                    self._connected = True
-                    
-                    # 初始化模拟账户信息
-                    self.account_info = {
-                        'balance': 1000000.0,
-                        'available': 1000000.0,
-                        'margin': 0.0,
-                        'frozen_margin': 0.0,
-                        'commission': 0.0,
-                        'profit': 0.0,
-                    }
-                    # #region agent log
-                    try:
-                        with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"ctp_trader.py:108","message":"Simulation mode connected successfully","data":{"account_info":self.account_info},"timestamp":int(time.time()*1000)})+'\n')
-                    except: pass
-                    # #endregion
-                    
-                    logger.info("模拟模式连接成功")
-                    return True
-                
-                # 真实CTP连接（使用vnpy-ctp）
-                if not VNPY_CTP_AVAILABLE:
-                    # #region agent log
-                    try:
-                        with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"ctp_trader.py:112","message":"VNPY_CTP_AVAILABLE is False","data":{"VNPY_CTP_AVAILABLE":VNPY_CTP_AVAILABLE},"timestamp":int(time.time()*1000)})+'\n')
-                    except: pass
-                    # #endregion
-                    logger.error("vnpy-ctp未安装，无法连接真实CTP接口")
+                # 验证配置
+                if not settings.validate_ctp_config():
+                    logger.error("CTP配置不完整，请检查.env文件中的配置项")
                     return False
                 
-                logger.info(f"连接CTP交易接口: {self.trade_address}")
+                logger.info(f"正在连接SimNow交易服务器: {self.trade_address}")
+                
+                # 创建事件引擎
+                from vnpy.event import EventEngine
+                event_engine = EventEngine()
                 
                 # 创建vnpy-ctp网关
-                self._ctp_api = CtpGateway()
+                self._ctp_api = CtpGateway(event_engine, "CTP")
+                
+                # 注册事件处理器
+                event_engine.register("eOrder", self._on_order_callback)
+                event_engine.register("eTrade", self._on_trade_callback)
+                event_engine.register("ePosition", self._on_position_callback)
+                event_engine.register("eAccount", self._on_account_callback)
+                event_engine.register("eLog", self._on_log_callback)
                 
                 # 配置CTP参数
-                ctp_config = {
+                ctp_setting = {
                     "用户名": self.user_id,
                     "密码": self.password,
                     "经纪商代码": self.broker_id,
@@ -155,47 +133,27 @@ class CTPTrader(TradingInterface):
                     "授权编码": settings.CTP_AUTH_CODE,
                 }
                 
-                # 注册回调
-                # vnpy-ctp使用事件驱动，需要注册事件处理器
-                # 注意：vnpy-ctp的实际API可能不同，这里是一个通用实现
-                # 实际使用时需要根据vnpy-ctp的具体API调整
+                # 启动事件引擎
+                event_engine.start()
                 
                 # 连接
-                self._ctp_api.connect(ctp_config)
+                self._ctp_api.connect(ctp_setting)
                 
-                # 等待登录完成（最多等待10秒）
-                # vnpy-ctp连接是异步的，需要等待登录回调
+                # 等待连接完成（最多等待10秒）
                 timeout = 10
                 start_time = time.time()
-                login_event = Event()
+                while not self._connected and (time.time() - start_time) < timeout:
+                    time.sleep(0.1)
                 
-                # 临时保存登录事件
-                original_on_login = getattr(self._ctp_api, 'on_login', None)
-                
-                def on_login_callback(data):
-                    if data.get('status', False):
-                        self._connected = True
-                        login_event.set()
-                    if original_on_login:
-                        original_on_login(data)
-                
-                # 设置登录回调
-                if hasattr(self._ctp_api, 'on_login'):
-                    self._ctp_api.on_login = on_login_callback
-                
-                # 等待登录
-                if login_event.wait(timeout=timeout):
-                    logger.info("CTP登录成功")
+                if self._connected:
+                    logger.info("SimNow交易服务器连接成功")
+                    # 查询账户和持仓
+                    self.query_account()
+                    self.query_positions()
+                    return True
                 else:
-                    logger.error("CTP登录超时")
+                    logger.error("SimNow交易服务器连接超时")
                     return False
-                
-                # 查询账户和持仓
-                self.query_account()
-                self.query_positions()
-                
-                logger.info("CTP交易接口连接成功")
-                return True
                 
             except Exception as e:
                 logger.error(f"CTP交易接口连接失败: {e}", exc_info=True)
@@ -216,7 +174,7 @@ class CTPTrader(TradingInterface):
             try:
                 logger.info("断开CTP交易接口连接")
                 
-                if self._ctp_api and not self._use_simulation:
+                if self._ctp_api:
                     # 断开vnpy-ctp连接
                     try:
                         self._ctp_api.close()
@@ -246,46 +204,11 @@ class CTPTrader(TradingInterface):
         Returns:
             订单ID，如果失败返回None
         """
-        # #region agent log
-        import json
-        try:
-            with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"ctp_trader.py:submit_order","message":"submit_order() called","data":{"_connected":self._connected,"symbol":order.symbol,"direction":order.direction.value,"price":order.price,"volume":order.volume},"timestamp":int(time.time()*1000)})+'\n')
-        except: pass
-        # #endregion
-        
         if not self._connected:
             logger.error("CTP交易接口未连接")
             return None
         
         try:
-            if self._use_simulation:
-                # 模拟模式：直接接受订单
-                logger.info(f"模拟模式提交订单: {order}")
-                order.status = OrderStatus.SUBMITTED
-                self.orders[order.order_id] = order
-                
-                # 模拟成交（延迟执行）
-                def simulate_fill():
-                    time.sleep(0.5)
-                    if order.order_id in self.orders:
-                        order.update_fill(order.volume, order.price)
-                        if self.on_trade_callback:
-                            try:
-                                self.on_trade_callback(order)
-                            except Exception as e:
-                                logger.error(f"成交回调执行失败: {e}")
-                
-                Thread(target=simulate_fill, daemon=True).start()
-                
-                if self.on_order_callback:
-                    try:
-                        self.on_order_callback(order)
-                    except Exception as e:
-                        logger.error(f"订单回调执行失败: {e}")
-                
-                return order.order_id
-            
             # 真实CTP下单
             if not self._ctp_api:
                 logger.error("CTP API未初始化")
@@ -364,18 +287,6 @@ class CTPTrader(TradingInterface):
             return False
         
         try:
-            if self._use_simulation:
-                # 模拟模式：直接撤销
-                logger.info(f"模拟模式撤销订单: {order_id}")
-                order.cancel()
-                
-                if self.on_order_callback:
-                    try:
-                        self.on_order_callback(order)
-                    except Exception as e:
-                        logger.error(f"订单回调执行失败: {e}")
-                
-                return True
             
             # 真实CTP撤单
             if not self._ctp_api:
@@ -422,37 +333,11 @@ class CTPTrader(TradingInterface):
         Returns:
             账户信息字典
         """
-        # #region agent log
-        import json
-        try:
-            with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"ctp_trader.py:query_account","message":"query_account() called","data":{"_connected":self._connected,"_use_simulation":self._use_simulation},"timestamp":int(time.time()*1000)})+'\n')
-        except: pass
-        # #endregion
-        
         if not self._connected:
             logger.warning("CTP交易接口未连接，返回空账户信息")
             return {}
         
         try:
-            if self._use_simulation:
-                # 模拟模式：返回模拟账户信息
-                if not self.account_info:
-                    self.account_info = {
-                        'balance': 1000000.0,
-                        'available': 1000000.0,
-                        'margin': 0.0,
-                        'frozen_margin': 0.0,
-                        'commission': 0.0,
-                        'profit': 0.0,
-                    }
-                # #region agent log
-                try:
-                    with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"ctp_trader.py:query_account","message":"Returning account info","data":{"account_info":self.account_info},"timestamp":int(time.time()*1000)})+'\n')
-                except: pass
-                # #endregion
-                return self.account_info.copy()
             
             # 真实CTP查询
             if not self._ctp_api:
@@ -488,9 +373,6 @@ class CTPTrader(TradingInterface):
             return []
         
         try:
-            if self._use_simulation:
-                # 模拟模式：返回空持仓列表
-                return list(self.positions.values())
             
             # 真实CTP查询
             if not self._ctp_api:
@@ -529,13 +411,6 @@ class CTPTrader(TradingInterface):
             return []
         
         try:
-            if self._use_simulation:
-                # 模拟模式：返回本地缓存的订单
-                if symbol:
-                    orders = [o for o in self.orders.values() if o.symbol == symbol]
-                else:
-                    orders = list(self.orders.values())
-                return orders
             
             # 真实CTP查询
             if not self._ctp_api:
@@ -608,10 +483,11 @@ class CTPTrader(TradingInterface):
         """vnpy-ctp Tick数据回调（行情数据，交易接口不需要）"""
         pass
     
-    def _on_trade_callback(self, trade_data: Dict):
+    def _on_trade_callback(self, event):
         """vnpy-ctp 成交通知回调"""
         try:
-            order_ref = trade_data.get('order_ref', '')
+            trade_data = event.data
+            order_ref = getattr(trade_data, 'order_ref', '') if hasattr(trade_data, 'order_ref') else trade_data.get('order_ref', '') if isinstance(trade_data, dict) else ''
             order_id = self._order_ref_map.get(order_ref)
             
             if not order_id or order_id not in self.orders:
@@ -619,8 +495,8 @@ class CTPTrader(TradingInterface):
                 return
             
             order = self.orders[order_id]
-            fill_volume = trade_data.get('volume', 0)
-            fill_price = trade_data.get('price', 0.0)
+            fill_volume = int(getattr(trade_data, 'volume', 0) if hasattr(trade_data, 'volume') else trade_data.get('volume', 0) if isinstance(trade_data, dict) else 0)
+            fill_price = float(getattr(trade_data, 'price', 0.0) if hasattr(trade_data, 'price') else trade_data.get('price', 0.0) if isinstance(trade_data, dict) else 0.0)
             
             # 更新订单成交信息
             order.update_fill(fill_volume, fill_price)
@@ -637,15 +513,16 @@ class CTPTrader(TradingInterface):
         except Exception as e:
             logger.error(f"处理成交通知失败: {e}", exc_info=True)
     
-    def _on_order_callback(self, order_data: Dict):
+    def _on_order_callback(self, event):
         """vnpy-ctp 订单状态回调"""
         try:
-            order_ref = order_data.get('order_ref', '')
+            order_data = event.data
+            order_ref = getattr(order_data, 'order_ref', '') if hasattr(order_data, 'order_ref') else order_data.get('order_ref', '') if isinstance(order_data, dict) else ''
             order_id = self._order_ref_map.get(order_ref)
             
             if not order_id:
                 # 可能是查询返回的订单，需要创建或更新
-                order_id = order_data.get('orderid', '')
+                order_id = getattr(order_data, 'orderid', '') if hasattr(order_data, 'orderid') else order_data.get('orderid', '') if isinstance(order_data, dict) else ''
                 if not order_id or order_id not in self.orders:
                     # 创建新订单对象
                     order = self._create_order_from_ctp_data(order_data)
@@ -659,11 +536,11 @@ class CTPTrader(TradingInterface):
                 order = self.orders[order_id]
             
             # 更新订单状态
-            status = order_data.get('status', '')
+            status = getattr(order_data, 'status', '') if hasattr(order_data, 'status') else order_data.get('status', '') if isinstance(order_data, dict) else ''
             self._update_order_status_from_ctp(order, status, order_data)
             
             # 设置查询事件（如果是查询返回的）
-            if 'query' in order_data.get('type', ''):
+            if isinstance(order_data, dict) and 'query' in order_data.get('type', ''):
                 self._order_query_event.set()
             
             # 调用订单回调
@@ -676,10 +553,11 @@ class CTPTrader(TradingInterface):
         except Exception as e:
             logger.error(f"处理订单状态失败: {e}", exc_info=True)
     
-    def _on_position_callback(self, position_data: Dict):
+    def _on_position_callback(self, event):
         """vnpy-ctp 持仓更新回调"""
         try:
-            symbol = position_data.get('symbol', '')
+            position_data = event.data
+            symbol = getattr(position_data, 'symbol', '') if hasattr(position_data, 'symbol') else position_data.get('symbol', '') if isinstance(position_data, dict) else ''
             if not symbol:
                 return
             
@@ -699,29 +577,59 @@ class CTPTrader(TradingInterface):
         except Exception as e:
             logger.error(f"处理持仓更新失败: {e}", exc_info=True)
     
-    def _on_account_callback(self, account_data: Dict):
+    def _on_account_callback(self, event):
         """vnpy-ctp 账户更新回调"""
         try:
+            account_data = event.data
             self.account_info = {
-                'balance': account_data.get('balance', 0.0),
-                'available': account_data.get('available', 0.0),
-                'margin': account_data.get('margin', 0.0),
-                'frozen_margin': account_data.get('frozen', 0.0),
-                'commission': account_data.get('commission', 0.0),
-                'profit': account_data.get('profit', 0.0),
+                'balance': float(account_data.balance) if hasattr(account_data, 'balance') else 0.0,
+                'available': float(account_data.available) if hasattr(account_data, 'available') else 0.0,
+                'margin': float(account_data.margin) if hasattr(account_data, 'margin') else 0.0,
+                'frozen_margin': float(account_data.frozen) if hasattr(account_data, 'frozen') else 0.0,
+                'commission': float(account_data.commission) if hasattr(account_data, 'commission') else 0.0,
+                'profit': float(account_data.profit) if hasattr(account_data, 'profit') else 0.0,
             }
             self._account_query_event.set()
             
         except Exception as e:
             logger.error(f"处理账户更新失败: {e}", exc_info=True)
     
-    def _create_order_from_ctp_data(self, order_data: Dict) -> Optional[Order]:
+    def _on_log_callback(self, event):
+        """vnpy-ctp 日志事件回调"""
+        try:
+            log_data = event.data
+            log_msg = log_data.get('msg', '') if isinstance(log_data, dict) else str(log_data)
+            log_level = log_data.get('level', 'INFO') if isinstance(log_data, dict) else 'INFO'
+            
+            # 处理连接状态
+            if '连接成功' in log_msg or '登录成功' in log_msg:
+                self._connected = True
+                logger.info(f"SimNow连接成功: {log_msg}")
+            elif '连接失败' in log_msg or '登录失败' in log_msg:
+                self._connected = False
+                logger.error(f"SimNow连接失败: {log_msg}")
+            
+        except Exception as e:
+            logger.debug(f"处理日志事件失败: {e}")
+    
+    def _create_order_from_ctp_data(self, order_data) -> Optional[Order]:
         """从CTP订单数据创建Order对象"""
         try:
-            symbol = order_data.get('symbol', '')
-            direction_str = order_data.get('direction', '')
-            price = float(order_data.get('price', 0))
-            volume = int(order_data.get('volume', 0))
+            # 处理vnpy-ctp数据格式
+            if hasattr(order_data, 'symbol'):
+                symbol = order_data.symbol.split('.')[0] if '.' in order_data.symbol else order_data.symbol
+                direction_str = str(getattr(order_data, 'direction', '0'))
+                price = float(getattr(order_data, 'price', 0))
+                volume = int(getattr(order_data, 'volume', 0))
+                order_id = getattr(order_data, 'orderid', '')
+            elif isinstance(order_data, dict):
+                symbol = order_data.get('symbol', '').split('.')[0] if '.' in order_data.get('symbol', '') else order_data.get('symbol', '')
+                direction_str = str(order_data.get('direction', '0'))
+                price = float(order_data.get('price', 0))
+                volume = int(order_data.get('volume', 0))
+                order_id = order_data.get('orderid', '')
+            else:
+                return None
             
             # 转换方向
             direction_map = {
@@ -742,18 +650,36 @@ class CTPTrader(TradingInterface):
             )
             
             # 设置订单ID
-            order.order_id = order_data.get('orderid', order.order_id)
+            if order_id:
+                order.order_id = order_id
             
             return order
             
         except Exception as e:
-            logger.error(f"创建订单对象失败: {e}")
+            logger.error(f"创建订单对象失败: {e}", exc_info=True)
             return None
     
-    def _update_order_status_from_ctp(self, order: Order, status: str, order_data: Dict):
+    def _update_order_status_from_ctp(self, order: Order, status: str, order_data):
         """从CTP状态更新订单状态"""
         # CTP订单状态：全部成交、部分成交、未成交、已撤销、拒单等
+        # vnpy-ctp使用Status枚举
+        try:
+            from vnpy.trader.constant import Status
+            if hasattr(status, 'value'):
+                status_value = status.value
+            elif isinstance(status, Status):
+                status_value = status.name
+            else:
+                status_value = str(status)
+        except:
+            status_value = str(status)
+        
         status_map = {
+            'ALLTRADED': OrderStatus.FILLED,
+            'PARTIALTRADED': OrderStatus.PARTIAL,
+            'NOTTRADED': OrderStatus.SUBMITTED,
+            'CANCELLED': OrderStatus.CANCELLED,
+            'REJECTED': OrderStatus.REJECTED,
             '全部成交': OrderStatus.FILLED,
             '部分成交': OrderStatus.PARTIAL,
             '未成交': OrderStatus.SUBMITTED,
@@ -761,27 +687,38 @@ class CTPTrader(TradingInterface):
             '拒单': OrderStatus.REJECTED,
         }
         
-        new_status = status_map.get(status, OrderStatus.SUBMITTED)
+        new_status = status_map.get(status_value, OrderStatus.SUBMITTED)
         order.status = new_status
         
         # 更新成交信息
-        if 'traded' in order_data:
+        if hasattr(order_data, 'traded'):
+            order.filled_volume = int(order_data.traded)
+        elif isinstance(order_data, dict) and 'traded' in order_data:
             order.filled_volume = int(order_data.get('traded', 0))
         
         order.update_time = datetime.now()
     
-    def _create_position_from_ctp_data(self, position_data: Dict) -> Optional[Position]:
+    def _create_position_from_ctp_data(self, position_data) -> Optional[Position]:
         """从CTP持仓数据创建Position对象"""
         try:
-            symbol = position_data.get('symbol', '')
-            volume = int(position_data.get('volume', 0))
-            price = float(position_data.get('price', 0))
-            direction_str = position_data.get('direction', '')
+            # 处理vnpy-ctp数据格式
+            if hasattr(position_data, 'symbol'):
+                symbol = position_data.symbol.split('.')[0] if '.' in position_data.symbol else position_data.symbol
+                volume = int(getattr(position_data, 'volume', 0))
+                price = float(getattr(position_data, 'price', 0))
+                direction_str = str(getattr(position_data, 'direction', ''))
+            elif isinstance(position_data, dict):
+                symbol = position_data.get('symbol', '').split('.')[0] if '.' in position_data.get('symbol', '') else position_data.get('symbol', '')
+                volume = int(position_data.get('volume', 0))
+                price = float(position_data.get('price', 0))
+                direction_str = str(position_data.get('direction', ''))
+            else:
+                return None
             
             # 转换方向
-            if direction_str in ['多', 'long', 'LONG', '1']:
+            if direction_str in ['多', 'long', 'LONG', '1', 'Long']:
                 direction = Direction.LONG
-            elif direction_str in ['空', 'short', 'SHORT', '-1']:
+            elif direction_str in ['空', 'short', 'SHORT', '-1', 'Short']:
                 direction = Direction.SHORT
             else:
                 direction = Direction.LONG if volume > 0 else Direction.NONE
@@ -801,7 +738,7 @@ class CTPTrader(TradingInterface):
             return pos
             
         except Exception as e:
-            logger.error(f"创建持仓对象失败: {e}")
+            logger.error(f"创建持仓对象失败: {e}", exc_info=True)
             return None
     
     def _get_exchange_from_symbol(self, symbol: str) -> str:
