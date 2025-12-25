@@ -6,7 +6,31 @@ from typing import Optional
 from dotenv import load_dotenv
 
 # 加载环境变量
-load_dotenv()
+# 指定 UTF-8 编码以避免中文注释导致的编码错误
+try:
+    load_dotenv(encoding='utf-8')
+except UnicodeDecodeError as e:
+    # 如果遇到编码错误，尝试修复 .env 文件编码
+    try:
+        import codecs
+        # 尝试以不同编码读取并转换为 UTF-8
+        for encoding in ['gbk', 'gb2312', 'latin1']:
+            try:
+                with codecs.open('.env', 'r', encoding=encoding) as f:
+                    content = f.read()
+                with codecs.open('.env', 'w', encoding='utf-8') as f:
+                    f.write(content)
+                load_dotenv(encoding='utf-8')
+                break
+            except (UnicodeDecodeError, UnicodeEncodeError):
+                continue
+        else:
+            raise Exception(f"无法读取 .env 文件，请确保文件编码为 UTF-8: {e}")
+    except Exception as ex:
+        raise Exception(f"无法修复 .env 文件编码: {ex}")
+except Exception as e:
+    # 其他错误，尝试默认方式
+    load_dotenv()
 
 
 class Settings:
