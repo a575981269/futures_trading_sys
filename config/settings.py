@@ -12,12 +12,18 @@ load_dotenv()
 class Settings:
     """系统配置类"""
     
-    # CTP连接配置
-    CTP_BROKER_ID: str = os.getenv('CTP_BROKER_ID', '')
+    # CTP连接配置 - SimNow 模拟环境
+    # BrokerID统一为：9999
+    # 支持上期所期权、能源中心期权、中金所期权、广期所期权、郑商所期权、大商所期权
+    # 三组服务器（看穿式前置，使用监控中心生产秘钥）：
+    # 第一组: Trade 182.254.243.31:30001, Market 182.254.243.31:30011
+    # 第二组: Trade 182.254.243.31:30002, Market 182.254.243.31:30012
+    # 第三组: Trade 182.254.243.31:30003, Market 182.254.243.31:30013
+    CTP_BROKER_ID: str = os.getenv('CTP_BROKER_ID', '9999')
     CTP_USER_ID: str = os.getenv('CTP_USER_ID', '')
     CTP_PASSWORD: str = os.getenv('CTP_PASSWORD', '')
-    CTP_MD_ADDRESS: str = os.getenv('CTP_MD_ADDRESS', 'tcp://180.168.146.187:10010')  # 默认模拟环境
-    CTP_TRADE_ADDRESS: str = os.getenv('CTP_TRADE_ADDRESS', 'tcp://180.168.146.187:10000')
+    CTP_MD_ADDRESS: str = os.getenv('CTP_MD_ADDRESS', 'tcp://182.254.243.31:30011')  # 第一组行情服务器
+    CTP_TRADE_ADDRESS: str = os.getenv('CTP_TRADE_ADDRESS', 'tcp://182.254.243.31:30001')  # 第一组交易服务器
     CTP_APP_ID: str = os.getenv('CTP_APP_ID', 'simnow_client_test')
     CTP_AUTH_CODE: str = os.getenv('CTP_AUTH_CODE', '0000000000000000')
     
