@@ -3,12 +3,47 @@ SimNow 模拟环境测试脚本
 """
 import sys
 import time
+from typing import Optional
 from config.settings import settings
 from market_data.ctp_realtime import CTPRealtimeData
 from trading.ctp_trader import CTPTrader
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def select_environment():
+    """
+    交互式选择SimNow环境
+    
+    Returns:
+        选择的环境类型（"normal" 或 "7x24"）
+    """
+    print("\n" + "=" * 60)
+    print("请选择SimNow环境")
+    print("=" * 60)
+    print("1. CTP主席系统（正常交易时间，端口30001/30011）")
+    print("2. 7x24环境（全天候，端口40001/40011）")
+    print("=" * 60)
+    
+    while True:
+        choice = input("请选择 [1/2，默认1]: ").strip()
+        if not choice:
+            choice = "1"
+        
+        if choice == "1":
+            env_type = settings.CTP_ENV_NORMAL
+            env_name = "CTP主席系统"
+            break
+        elif choice == "2":
+            env_type = settings.CTP_ENV_7X24
+            env_name = "7x24环境"
+            break
+        else:
+            print("❌ 无效选择，请输入 1 或 2")
+    
+    print(f"\n[OK] 已选择: {env_name}")
+    return env_type
 
 
 def test_connection():
@@ -22,8 +57,10 @@ def test_connection():
     print(f"  经纪商代码: {settings.CTP_BROKER_ID}")
     print(f"  用户代码: {settings.CTP_USER_ID}")
     print(f"  密码: {'*' * len(settings.CTP_PASSWORD) if settings.CTP_PASSWORD else '(未设置)'}")
-    print(f"  行情服务器: {settings.CTP_MD_ADDRESS}")
-    print(f"  交易服务器: {settings.CTP_TRADE_ADDRESS}")
+    print(f"  环境类型: {settings.CTP_ENVIRONMENT} ({'7x24环境' if settings.is_7x24_environment() else 'CTP主席系统'})")
+    addresses = settings.get_server_addresses()
+    print(f"  行情服务器: {addresses['md_address']}")
+    print(f"  交易服务器: {addresses['trade_address']}")
     print(f"  应用标识: {settings.CTP_APP_ID}")
     print(f"  授权码: {settings.CTP_AUTH_CODE}")
     
@@ -43,22 +80,31 @@ def test_connection():
     return True
 
 
-def test_market_data():
-    """测试行情接口"""
+def test_market_data(environment: Optional[str] = None):
+    """
+    测试行情接口
+    
+    Args:
+        environment: 环境类型（"normal" 或 "7x24"），如果为None则交互式选择
+    """
     print("\n" + "=" * 60)
     print("测试行情接口连接")
     print("=" * 60)
+    
+    # 如果没有指定环境，则交互式选择
+    if environment is None:
+        environment = select_environment()
     
     try:
         # #region agent log
         import json
         try:
             with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"test_simnow.py:test_market_data","message":"Starting market data test","data":{},"timestamp":int(time.time()*1000)})+'\n')
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"test_simnow.py:test_market_data","message":"Starting market data test","data":{"environment":environment},"timestamp":int(time.time()*1000)})+'\n')
         except: pass
         # #endregion
         
-        realtime = CTPRealtimeData(auto_save=True)
+        realtime = CTPRealtimeData(auto_save=True, environment=environment)
         
         # #region agent log
         try:
@@ -162,14 +208,23 @@ def test_market_data():
         return False
 
 
-def test_trading():
-    """测试交易接口"""
+def test_trading(environment: Optional[str] = None):
+    """
+    测试交易接口
+    
+    Args:
+        environment: 环境类型（"normal" 或 "7x24"），如果为None则交互式选择
+    """
     print("\n" + "=" * 60)
     print("测试交易接口连接")
     print("=" * 60)
     
+    # 如果没有指定环境，则交互式选择
+    if environment is None:
+        environment = select_environment()
+    
     try:
-        trader = CTPTrader()
+        trader = CTPTrader(environment=environment)
         
         # 定义订单回调
         def on_order(order):

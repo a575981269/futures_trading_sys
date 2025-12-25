@@ -11,7 +11,7 @@ from database.db_manager import DatabaseManager
 from market_data.data_handler import DataHandler
 from config.settings import settings
 from utils.logger import get_logger
-from utils.helpers import parse_symbol
+from utils.helpers import parse_symbol, is_trading_time, get_next_trading_time
 
 logger = get_logger(__name__)
 
@@ -19,15 +19,29 @@ logger = get_logger(__name__)
 try:
     from vnpy_ctp import CtpGateway
     from vnpy.event import EventEngine
+    from vnpy.trader.event import EVENT_LOG, EVENT_TICK, EVENT_ORDER, EVENT_TRADE, EVENT_ACCOUNT, EVENT_POSITION
+    from vnpy.trader.object import SubscribeRequest
+    from vnpy.trader.constant import Exchange
     VNPY_CTP_AVAILABLE = True
 except ImportError:
     try:
         # 尝试备用导入路径
         from vnpy.gateway.ctp import CtpGateway
         from vnpy.event import EventEngine
+        from vnpy.trader.event import EVENT_LOG, EVENT_TICK, EVENT_ORDER, EVENT_TRADE, EVENT_ACCOUNT, EVENT_POSITION
+        from vnpy.trader.object import SubscribeRequest
+        from vnpy.trader.constant import Exchange
         VNPY_CTP_AVAILABLE = True
     except ImportError:
         VNPY_CTP_AVAILABLE = False
+        EVENT_LOG = "eLog"
+        EVENT_TICK = "eTick"
+        EVENT_ORDER = "eOrder"
+        EVENT_TRADE = "eTrade"
+        EVENT_ACCOUNT = "eAccount"
+        EVENT_POSITION = "ePosition"
+        SubscribeRequest = None
+        Exchange = None
         logger.error("vnpy-ctp未安装或依赖缺失，请运行: pip install vnpy vnpy-ctp")
 
 
@@ -35,13 +49,15 @@ class CTPRealtimeData:
     """CTP实时行情接口"""
     
     def __init__(self, db_manager: Optional[DatabaseManager] = None,
-                 auto_save: bool = True):
+                 auto_save: bool = True,
+                 environment: Optional[str] = None):
         """
         初始化实时行情接口 - SimNow 模拟环境
         
         Args:
             db_manager: 数据库管理器
             auto_save: 是否自动保存数据到数据库
+            environment: 环境类型（"normal" 或 "7x24"），如果为None则使用配置中的环境类型
         """
         if not VNPY_CTP_AVAILABLE:
             raise ImportError("vnpy-ctp未安装，无法使用SimNow模拟环境。请运行: pip install vnpy-ctp")
@@ -49,6 +65,7 @@ class CTPRealtimeData:
         self.db_manager = db_manager or DatabaseManager(settings.DB_URL)
         self.data_handler = DataHandler()
         self.auto_save = auto_save
+        self.environment = environment or settings.CTP_ENVIRONMENT
         
         # 订阅的合约列表
         self.subscribed_symbols: List[str] = []
@@ -65,7 +82,8 @@ class CTPRealtimeData:
         self._event_engine: Optional[EventEngine] = None
         self._ctp_gateway: Optional[CtpGateway] = None
         
-        logger.info("CTP实时行情接口初始化完成（SimNow模拟环境）")
+        env_name = "7x24环境" if settings.is_7x24_environment(self.environment) else "CTP主席系统"
+        logger.info(f"CTP实时行情接口初始化完成（SimNow模拟环境 - {env_name}）")
     
     def connect(self) -> bool:
         """
@@ -97,6 +115,21 @@ class CTPRealtimeData:
             return False
         
         try:
+            # 检查交易时间（仅CTP主席系统需要检查，7x24环境全天候开放）
+            is_7x24 = settings.is_7x24_environment(self.environment)
+            if not is_7x24 and not is_trading_time():
+                next_time = get_next_trading_time()
+                logger.warning(f"当前不在交易时间内，CTP主席系统不开放")
+                logger.info(f"下一个交易时间: {next_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                logger.info("提示：如需在非交易时间测试，请使用7x24环境（端口40001/40011）")
+                # #region agent log
+                try:
+                    with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"ctp_realtime.py:connect","message":"Not in trading time","data":{"current_time":datetime.now().strftime('%H:%M:%S'),"next_trading_time":next_time.strftime('%Y-%m-%d %H:%M:%S')},"timestamp":int(time.time()*1000)})+'\n')
+                except: pass
+                # #endregion
+                return False
+            
             # 验证配置
             if not settings.validate_ctp_config():
                 logger.error("CTP配置不完整，请检查.env文件中的配置项")
@@ -108,10 +141,20 @@ class CTPRealtimeData:
                 # #endregion
                 return False
             
+            # 根据环境类型获取服务器地址
+            addresses = settings.get_server_addresses(self.environment)
+            
             # #region agent log
             try:
                 with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"ctp_realtime.py:connect","message":"Creating EventEngine and CtpGateway","data":{},"timestamp":int(time.time()*1000)})+'\n')
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"ctp_realtime.py:connect","message":"Addresses retrieved","data":{"environment":self.environment,"md_address":addresses['md_address'],"trade_address":addresses['trade_address']},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            
+            # #region agent log
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"ctp_realtime.py:connect","message":"Creating EventEngine and CtpGateway","data":{"environment":self.environment,"is_7x24":is_7x24},"timestamp":int(time.time()*1000)})+'\n')
             except: pass
             # #endregion
             
@@ -121,18 +164,24 @@ class CTPRealtimeData:
             # 创建CTP网关
             self._ctp_gateway = CtpGateway(self._event_engine, "CTP")
             
-            # 注册事件处理器
-            self._event_engine.register("eTick", self._on_tick_event)
-            self._event_engine.register("eBar", self._on_bar_event)
-            self._event_engine.register("eLog", self._on_log_event)
+            # 注册事件处理器（使用正确的事件名称）
+            self._event_engine.register(EVENT_TICK, self._on_tick_event)
+            self._event_engine.register(EVENT_LOG, self._on_log_event)
+            
+            # #region agent log
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"ctp_realtime.py:connect","message":"Events registered","data":{"EVENT_TICK":EVENT_TICK,"EVENT_LOG":EVENT_LOG},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
             
             # 配置CTP连接参数
             ctp_setting = {
                 "用户名": settings.CTP_USER_ID,
                 "密码": settings.CTP_PASSWORD,
                 "经纪商代码": settings.CTP_BROKER_ID,
-                "交易服务器": settings.CTP_TRADE_ADDRESS,
-                "行情服务器": settings.CTP_MD_ADDRESS,
+                "交易服务器": addresses['trade_address'],
+                "行情服务器": addresses['md_address'],
                 "产品名称": settings.CTP_APP_ID,
                 "授权编码": settings.CTP_AUTH_CODE,
             }
@@ -140,22 +189,55 @@ class CTPRealtimeData:
             # #region agent log
             try:
                 with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"ctp_realtime.py:connect","message":"Calling gateway.connect()","data":{"md_address":settings.CTP_MD_ADDRESS},"timestamp":int(time.time()*1000)})+'\n')
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"ctp_realtime.py:connect","message":"CTP setting prepared","data":{"行情服务器":ctp_setting["行情服务器"],"交易服务器":ctp_setting["交易服务器"],"addresses_md":addresses['md_address'],"addresses_trade":addresses['trade_address']},"timestamp":int(time.time()*1000)})+'\n')
             except: pass
             # #endregion
             
             # 启动事件引擎
             self._event_engine.start()
             
+            # #region agent log
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"ctp_realtime.py:connect","message":"EventEngine started, calling gateway.connect()","data":{"ctp_setting_keys":list(ctp_setting.keys())},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            
             # 连接
-            logger.info(f"正在连接SimNow行情服务器: {settings.CTP_MD_ADDRESS}")
-            self._ctp_gateway.connect(ctp_setting)
+            env_name = "7x24环境" if is_7x24 else "CTP主席系统"
+            logger.info(f"正在连接SimNow行情服务器（{env_name}）: {addresses['md_address']}")
+            try:
+                self._ctp_gateway.connect(ctp_setting)
+                # #region agent log
+                try:
+                    with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"ctp_realtime.py:connect","message":"gateway.connect() called successfully","data":{},"timestamp":int(time.time()*1000)})+'\n')
+                except: pass
+                # #endregion
+            except Exception as connect_error:
+                # #region agent log
+                try:
+                    with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"ctp_realtime.py:connect","message":"gateway.connect() raised exception","data":{"error":str(connect_error)},"timestamp":int(time.time()*1000)})+'\n')
+                except: pass
+                # #endregion
+                raise
             
             # 等待连接完成（最多等待10秒）
             timeout = 10
             start_time = time.time()
+            check_count = 0
             while not self.is_connected and (time.time() - start_time) < timeout:
                 time.sleep(0.1)
+                check_count += 1
+                # 每1秒记录一次状态
+                if check_count % 10 == 0:
+                    # #region agent log
+                    try:
+                        with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"ctp_realtime.py:connect","message":"Waiting for connection","data":{"is_connected":self.is_connected,"elapsed":time.time()-start_time,"check_count":check_count},"timestamp":int(time.time()*1000)})+'\n')
+                    except: pass
+                    # #endregion
             
             # #region agent log
             try:
@@ -233,15 +315,31 @@ class CTPRealtimeData:
                 logger.error("CTP网关未初始化")
                 return False
             
-            # 订阅合约（vnpy-ctp使用vt_symbol格式：合约代码.交易所）
-            exchange = self._get_exchange_from_symbol(symbol)
-            vt_symbol = f"{symbol}.{exchange}"
+            # 获取交易所代码（字符串）
+            exchange_str = self._get_exchange_from_symbol(symbol)
+            
+            # 将字符串转换为Exchange枚举
+            exchange_enum = self._get_exchange_enum(exchange_str)
+            if not exchange_enum:
+                logger.error(f"不支持的交易所: {exchange_str}")
+                return False
+            
+            # 创建订阅请求对象
+            subscribe_req = SubscribeRequest(symbol, exchange_enum)
+            
+            # #region agent log
+            import json
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"ctp_realtime.py:subscribe","message":"Creating SubscribeRequest","data":{"symbol":symbol,"exchange_str":exchange_str,"exchange_enum":str(exchange_enum),"vt_symbol":subscribe_req.vt_symbol},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
             
             # 订阅行情
-            self._ctp_gateway.subscribe(vt_symbol)
+            self._ctp_gateway.subscribe(subscribe_req)
             
             self.subscribed_symbols.append(symbol)
-            logger.info(f"订阅合约成功: {symbol} ({vt_symbol})")
+            logger.info(f"订阅合约成功: {symbol} ({subscribe_req.vt_symbol})")
             
             return True
             
@@ -319,7 +417,30 @@ class CTPRealtimeData:
             
             # 自动保存到数据库
             if self.auto_save:
+                # 保存前创建对象的副本，避免会话绑定问题
+                # 提取所有属性值，创建新的未绑定对象
+                tick_for_callback = TickData(
+                    symbol=tick.symbol,
+                    exchange=tick.exchange,
+                    datetime=tick.datetime,
+                    last_price=tick.last_price,
+                    volume=tick.volume,
+                    open_interest=tick.open_interest,
+                    bid_price1=tick.bid_price1,
+                    bid_volume1=tick.bid_volume1,
+                    ask_price1=tick.ask_price1,
+                    ask_volume1=tick.ask_volume1,
+                    turnover=tick.turnover
+                )
+                
+                # 保存原始对象
                 self.db_manager.save_tick(tick)
+                
+                # 使用未绑定的副本调用回调
+                tick = tick_for_callback
+            else:
+                # 如果不保存，直接使用原始对象
+                pass
             
             # 调用注册的回调函数
             for callback in self.tick_callbacks:
@@ -333,33 +454,12 @@ class CTPRealtimeData:
     
     def _on_bar_event(self, event):
         """
-        vnpy-ctp K线数据事件处理
+        vnpy-ctp K线数据事件处理（从Tick数据生成）
         
-        Args:
-            event: vnpy事件对象，包含Bar数据
+        注意：vnpy-ctp 通常不直接提供 Bar 事件，需要从 Tick 数据聚合生成
         """
-        try:
-            bar_data = event.data
-            
-            # 转换vnpy-ctp Bar数据格式
-            kline = self._convert_vnpy_bar_data(bar_data)
-            
-            if not kline or not self.data_handler.validate_kline(kline):
-                return
-            
-            # 自动保存到数据库
-            if self.auto_save:
-                self.db_manager.save_kline(kline)
-            
-            # 调用注册的回调函数
-            for callback in self.kline_callbacks:
-                try:
-                    callback(kline)
-                except Exception as e:
-                    logger.error(f"K线回调函数执行失败: {e}")
-                    
-        except Exception as e:
-            logger.error(f"处理K线数据失败: {e}", exc_info=True)
+        # 此方法保留用于未来扩展，当前从 Tick 数据生成 K 线
+        pass
     
     def _on_log_event(self, event):
         """
@@ -369,34 +469,62 @@ class CTPRealtimeData:
             event: vnpy事件对象，包含日志信息
         """
         try:
-            log_data = event.data
-            log_msg = log_data.get('msg', '') if isinstance(log_data, dict) else str(log_data)
-            log_level = log_data.get('level', 'INFO') if isinstance(log_data, dict) else 'INFO'
-            
             # #region agent log
             import json
             try:
                 with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"ctp_realtime.py:_on_log_event","message":"Log event received","data":{"msg":log_msg,"level":log_level},"timestamp":int(time.time()*1000)})+'\n')
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"ctp_realtime.py:_on_log_event","message":"Log event RECEIVED","data":{"event_type":type(event).__name__,"has_data":hasattr(event,'data')},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            
+            # vnpy 事件对象通常有 data 属性
+            if hasattr(event, 'data'):
+                log_data = event.data
+                # log_data 可能是字符串或对象
+                if isinstance(log_data, str):
+                    log_msg = log_data
+                    log_level = 'INFO'
+                elif isinstance(log_data, dict):
+                    log_msg = log_data.get('msg', '') or log_data.get('content', '') or str(log_data)
+                    log_level = log_data.get('level', 'INFO')
+                else:
+                    # 可能是对象，尝试获取属性
+                    log_msg = getattr(log_data, 'msg', None) or getattr(log_data, 'content', None) or str(log_data)
+                    log_level = getattr(log_data, 'level', 'INFO')
+            else:
+                log_msg = str(event)
+                log_level = 'INFO'
+            
+            # #region agent log
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"ctp_realtime.py:_on_log_event","message":"Log event processed","data":{"msg":log_msg[:100] if log_msg else "","level":log_level},"timestamp":int(time.time()*1000)})+'\n')
             except: pass
             # #endregion
             
             # 处理连接状态
-            if '连接成功' in log_msg or '登录成功' in log_msg or 'connected' in log_msg.lower() or 'login' in log_msg.lower():
+            log_msg_lower = log_msg.lower() if log_msg else ''
+            if any(keyword in log_msg for keyword in ['连接成功', '登录成功', 'connected', 'login success']) or any(keyword in log_msg_lower for keyword in ['connected', 'login success']):
                 self.is_connected = True
                 logger.info(f"SimNow连接成功: {log_msg}")
                 # #region agent log
                 try:
                     with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"ctp_realtime.py:_on_log_event","message":"Connection SUCCESS detected","data":{"is_connected":self.is_connected},"timestamp":int(time.time()*1000)})+'\n')
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"ctp_realtime.py:_on_log_event","message":"Connection SUCCESS detected","data":{"is_connected":self.is_connected},"timestamp":int(time.time()*1000)})+'\n')
                 except: pass
                 # #endregion
-            elif '连接失败' in log_msg or '登录失败' in log_msg or 'failed' in log_msg.lower() or 'error' in log_msg.lower():
+            elif any(keyword in log_msg for keyword in ['连接失败', '登录失败', 'failed', 'error']) or any(keyword in log_msg_lower for keyword in ['failed', 'error', 'timeout']):
                 self.is_connected = False
                 logger.error(f"SimNow连接失败: {log_msg}")
             
         except Exception as e:
             logger.debug(f"处理日志事件失败: {e}")
+            # #region agent log
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"ctp_realtime.py:_on_log_event","message":"Exception in log event handler","data":{"error":str(e)},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
     
     def _on_bar(self, bar_data: Dict):
         """
@@ -496,7 +624,7 @@ class CTPRealtimeData:
             return None
     
     def _get_exchange_from_symbol(self, symbol: str) -> str:
-        """从合约代码获取交易所代码"""
+        """从合约代码获取交易所代码（字符串）"""
         # 根据合约代码前缀判断交易所
         if symbol.startswith('rb') or symbol.startswith('cu') or symbol.startswith('au') or symbol.startswith('ag'):
             return 'SHFE'  # 上海期货交易所
@@ -510,6 +638,21 @@ class CTPRealtimeData:
             return 'INE'  # 上海国际能源交易中心
         else:
             return 'SHFE'  # 默认
+    
+    def _get_exchange_enum(self, exchange_str: str):
+        """将交易所字符串转换为Exchange枚举"""
+        if not VNPY_CTP_AVAILABLE or not Exchange:
+            return None
+        
+        exchange_map = {
+            'SHFE': Exchange.SHFE,
+            'DCE': Exchange.DCE,
+            'CZCE': Exchange.CZCE,
+            'CFFEX': Exchange.CFFEX,
+            'INE': Exchange.INE,
+            'GFEX': Exchange.GFEX,
+        }
+        return exchange_map.get(exchange_str)
     
     def get_subscribed_symbols(self) -> List[str]:
         """获取已订阅的合约列表"""

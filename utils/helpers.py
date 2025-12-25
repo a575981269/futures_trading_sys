@@ -105,6 +105,151 @@ def get_trading_days(start_date: datetime, end_date: datetime) -> list:
     return days
 
 
+def is_trading_time(dt: Optional[datetime] = None) -> bool:
+    """
+    检查当前时间是否在交易时间内
+    
+    Args:
+        dt: 要检查的时间，如果为None则使用当前时间
+    
+    Returns:
+        是否在交易时间内
+    """
+    if dt is None:
+        dt = datetime.now()
+    
+    hour = dt.hour
+    minute = dt.minute
+    time_minutes = hour * 60 + minute
+    
+    # 日盘时间：09:00-15:00
+    day_start = 9 * 60  # 09:00
+    day_end = 15 * 60  # 15:00
+    
+    # 夜盘时间：21:00-02:30（次日）
+    night_start = 21 * 60  # 21:00
+    night_end = 24 * 60 + 2 * 60 + 30  # 次日 02:30
+    
+    # 清算时间：16:00-19:00（CTP主席系统不开放）
+    settlement_start = 16 * 60  # 16:00
+    settlement_end = 19 * 60  # 19:00
+    
+    # 检查是否在清算时间内
+    if settlement_start <= time_minutes < settlement_end:
+        return False
+    
+    # 检查是否在日盘时间内
+    if day_start <= time_minutes < day_end:
+        return True
+    
+    # 检查是否在夜盘时间内（跨日）
+    if time_minutes >= night_start or time_minutes < (night_end % (24 * 60)):
+        return True
+    
+    return False
+
+
+def is_7x24_trading_time(dt: Optional[datetime] = None) -> bool:
+    """
+    检查当前时间是否在7x24环境的交易时间内
+    
+    7x24环境交易时间：
+    - 交易日：16:00～次日09:00
+    - 非交易日：16:00～次日12:00
+    
+    Args:
+        dt: 要检查的时间，如果为None则使用当前时间
+    
+    Returns:
+        是否在7x24环境交易时间内
+    """
+    if dt is None:
+        dt = datetime.now()
+    
+    hour = dt.hour
+    minute = dt.minute
+    time_minutes = hour * 60 + minute
+    
+    # 7x24环境交易时间：
+    # - 16:00-24:00（当日）
+    # - 00:00-09:00（次日，交易日）
+    # - 00:00-12:00（次日，非交易日）
+    
+    # 16:00之后到24:00之前，属于7x24交易时间
+    if time_minutes >= 16 * 60:
+        return True
+    
+    # 00:00到09:00之间，属于7x24交易时间（交易日）
+    # 注意：这里简化处理，假设都是交易日
+    # 实际应用中可以根据交易日历判断
+    if time_minutes < 9 * 60:
+        return True
+    
+    # 09:00-12:00之间，需要判断是否为交易日
+    # 这里简化处理，假设都是交易日，所以返回True
+    # 实际应用中应该根据交易日历判断
+    if 9 * 60 <= time_minutes < 12 * 60:
+        # 简化：假设都是交易日
+        return True
+    
+    # 12:00-16:00之间，7x24环境不开放（系统维护时间）
+    return False
+
+
+def get_next_trading_time(dt: Optional[datetime] = None) -> datetime:
+    """
+    获取下一个交易时间
+    
+    Args:
+        dt: 当前时间，如果为None则使用当前时间
+    
+    Returns:
+        下一个交易时间
+    """
+    if dt is None:
+        dt = datetime.now()
+    
+    hour = dt.hour
+    minute = dt.minute
+    time_minutes = hour * 60 + minute
+    
+    # 清算时间：16:00-19:00
+    settlement_start = 16 * 60
+    settlement_end = 19 * 60
+    
+    # 如果在清算时间内，下一个交易时间是夜盘 21:00
+    if settlement_start <= time_minutes < settlement_end:
+        next_time = dt.replace(hour=21, minute=0, second=0, microsecond=0)
+        if next_time <= dt:
+            next_time = next_time.replace(day=next_time.day + 1)
+        return next_time
+    
+    # 如果在日盘结束后（15:00-16:00），下一个交易时间是夜盘 21:00
+    if 15 * 60 <= time_minutes < settlement_start:
+        next_time = dt.replace(hour=21, minute=0, second=0, microsecond=0)
+        return next_time
+    
+    # 如果在夜盘结束后（02:30-09:00），下一个交易时间是日盘 09:00
+    if time_minutes < 9 * 60 or (time_minutes >= 2 * 60 + 30 and time_minutes < 9 * 60):
+        next_time = dt.replace(hour=9, minute=0, second=0, microsecond=0)
+        if next_time <= dt:
+            next_time = next_time.replace(day=next_time.day + 1)
+        return next_time
+    
+    # 如果在夜盘结束后（02:30之后），下一个交易时间是日盘 09:00
+    if time_minutes >= 2 * 60 + 30 and time_minutes < 9 * 60:
+        next_time = dt.replace(hour=9, minute=0, second=0, microsecond=0)
+        if next_time <= dt:
+            next_time = next_time.replace(day=next_time.day + 1)
+        return next_time
+    
+    # 默认返回下一个日盘时间
+    next_time = dt.replace(hour=9, minute=0, second=0, microsecond=0)
+    if next_time <= dt:
+        next_time = next_time.replace(day=next_time.day + 1)
+    return next_time
+
+
 def format_number(value: float, decimals: int = 2) -> str:
     """
     格式化数字显示

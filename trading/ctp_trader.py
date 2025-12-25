@@ -12,20 +12,28 @@ from backtest.portfolio import Position, Direction
 from config.settings import settings
 from config.contracts import get_contract_multiplier
 from utils.logger import get_logger
+from utils.helpers import is_trading_time, get_next_trading_time
 
 logger = get_logger(__name__)
 
 # 尝试导入vnpy-ctp
 try:
     from vnpy_ctp import CtpGateway
+    from vnpy.trader.event import EVENT_LOG, EVENT_ORDER, EVENT_TRADE, EVENT_ACCOUNT, EVENT_POSITION
     VNPY_CTP_AVAILABLE = True
 except ImportError:
     try:
         # 尝试备用导入路径
         from vnpy.gateway.ctp import CtpGateway
+        from vnpy.trader.event import EVENT_LOG, EVENT_ORDER, EVENT_TRADE, EVENT_ACCOUNT, EVENT_POSITION
         VNPY_CTP_AVAILABLE = True
     except ImportError:
         VNPY_CTP_AVAILABLE = False
+        EVENT_LOG = "eLog"
+        EVENT_ORDER = "eOrder"
+        EVENT_TRADE = "eTrade"
+        EVENT_ACCOUNT = "eAccount"
+        EVENT_POSITION = "ePosition"
         logger.error("vnpy-ctp未安装或依赖缺失，请运行: pip install vnpy vnpy-ctp")
 
 
@@ -36,7 +44,8 @@ class CTPTrader(TradingInterface):
                  broker_id: Optional[str] = None,
                  user_id: Optional[str] = None,
                  password: Optional[str] = None,
-                 trade_address: Optional[str] = None):
+                 trade_address: Optional[str] = None,
+                 environment: Optional[str] = None):
         """
         初始化CTP交易接口
         
@@ -45,11 +54,17 @@ class CTPTrader(TradingInterface):
             user_id: 用户代码
             password: 密码
             trade_address: 交易服务器地址
+            environment: 环境类型（"normal" 或 "7x24"），如果为None则使用配置中的环境类型
         """
         self.broker_id = broker_id or settings.CTP_BROKER_ID
         self.user_id = user_id or settings.CTP_USER_ID
         self.password = password or settings.CTP_PASSWORD
-        self.trade_address = trade_address or settings.CTP_TRADE_ADDRESS
+        self.environment = environment or settings.CTP_ENVIRONMENT
+        
+        # 根据环境类型获取服务器地址
+        addresses = settings.get_server_addresses(self.environment)
+        self.trade_address = trade_address or addresses['trade_address']
+        self.md_address = addresses['md_address']
         
         # 连接状态
         self._connected = False
@@ -82,7 +97,8 @@ class CTPTrader(TradingInterface):
         self._position_query_event = Event()
         self._order_query_event = Event()
         
-        logger.info("CTP交易接口初始化完成（SimNow模拟环境）")
+        env_name = "7x24环境" if settings.is_7x24_environment(self.environment) else "CTP主席系统"
+        logger.info(f"CTP交易接口初始化完成（SimNow模拟环境 - {env_name}）")
     
     def connect(self) -> bool:
         """
@@ -101,12 +117,22 @@ class CTPTrader(TradingInterface):
                 return False
             
             try:
+                # 检查交易时间（仅CTP主席系统需要检查，7x24环境全天候开放）
+                is_7x24 = settings.is_7x24_environment(self.environment)
+                if not is_7x24 and not is_trading_time():
+                    next_time = get_next_trading_time()
+                    logger.warning(f"当前不在交易时间内，CTP主席系统不开放")
+                    logger.info(f"下一个交易时间: {next_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                    logger.info("提示：如需在非交易时间测试，请使用7x24环境（端口40001/40011）")
+                    return False
+                
                 # 验证配置
                 if not settings.validate_ctp_config():
                     logger.error("CTP配置不完整，请检查.env文件中的配置项")
                     return False
                 
-                logger.info(f"正在连接SimNow交易服务器: {self.trade_address}")
+                env_name = "7x24环境" if is_7x24 else "CTP主席系统"
+                logger.info(f"正在连接SimNow交易服务器（{env_name}）: {self.trade_address}")
                 
                 # 创建事件引擎
                 from vnpy.event import EventEngine
@@ -115,12 +141,12 @@ class CTPTrader(TradingInterface):
                 # 创建vnpy-ctp网关
                 self._ctp_api = CtpGateway(event_engine, "CTP")
                 
-                # 注册事件处理器
-                event_engine.register("eOrder", self._on_order_callback)
-                event_engine.register("eTrade", self._on_trade_callback)
-                event_engine.register("ePosition", self._on_position_callback)
-                event_engine.register("eAccount", self._on_account_callback)
-                event_engine.register("eLog", self._on_log_callback)
+                # 注册事件处理器（使用正确的事件名称）
+                event_engine.register(EVENT_ORDER, self._on_order_callback)
+                event_engine.register(EVENT_TRADE, self._on_trade_callback)
+                event_engine.register(EVENT_POSITION, self._on_position_callback)
+                event_engine.register(EVENT_ACCOUNT, self._on_account_callback)
+                event_engine.register(EVENT_LOG, self._on_log_callback)
                 
                 # 配置CTP参数
                 ctp_setting = {
@@ -128,7 +154,7 @@ class CTPTrader(TradingInterface):
                     "密码": self.password,
                     "经纪商代码": self.broker_id,
                     "交易服务器": self.trade_address,
-                    "行情服务器": settings.CTP_MD_ADDRESS,
+                    "行情服务器": self.md_address,
                     "产品名称": settings.CTP_APP_ID,
                     "授权编码": settings.CTP_AUTH_CODE,
                 }
