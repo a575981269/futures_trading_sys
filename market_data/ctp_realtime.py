@@ -165,13 +165,79 @@ class CTPRealtimeData:
             self._ctp_gateway = CtpGateway(self._event_engine, "CTP")
             
             # 注册事件处理器（使用正确的事件名称）
-            self._event_engine.register(EVENT_TICK, self._on_tick_event)
+            # EVENT_TICK 确认是 'eTick.'（带点）
+            # vnpy的事件名称格式可能是 "gateway_name.event_name"，尝试两种格式
+            gateway_name = "CTP"
+            possible_tick_events = [
+                EVENT_TICK,  # 'eTick.'
+                f"{gateway_name}.{EVENT_TICK}",  # 'CTP.eTick.'
+                "eTick",  # 不带点
+                f"{gateway_name}.eTick",  # 'CTP.eTick'
+            ]
+            
+            # 添加通用事件监听器用于调试（捕获所有事件）
+            def _debug_all_events(event):
+                # #region agent log
+                try:
+                    event_type = type(event).__name__
+                    has_data = hasattr(event, 'data')
+                    data_type = type(event.data).__name__ if has_data else None
+                    # 尝试获取事件类型字符串
+                    event_type_str = str(getattr(event, 'type', None) or getattr(event, '__class__', None) or event_type)
+                    with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"ALL_EVENTS","location":"ctp_realtime.py:connect","message":"All events listener triggered","data":{"event_type":event_type_str[:100],"has_data":has_data,"data_type":data_type},"timestamp":int(time.time()*1000)})+'\n')
+                except Exception as e:
+                    try:
+                        with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"ALL_EVENTS","location":"ctp_realtime.py:connect","message":"All events listener error","data":{"error":str(e)[:100]},"timestamp":int(time.time()*1000)})+'\n')
+                    except: pass
+                # #endregion
+            
+            tick_registered = False
+            for tick_event in possible_tick_events:
+                try:
+                    self._event_engine.register(tick_event, self._on_tick_event)
+                    tick_registered = True
+                    # #region agent log
+                    try:
+                        with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"ctp_realtime.py:connect","message":"Tick event registered successfully","data":{"event_name":tick_event,"EVENT_TICK":EVENT_TICK},"timestamp":int(time.time()*1000)})+'\n')
+                    except: pass
+                    # #endregion
+                    break
+                except Exception as reg_error:
+                    # #region agent log
+                    try:
+                        with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"ctp_realtime.py:connect","message":"Tick event registration attempt failed","data":{"event_name":tick_event,"error":str(reg_error)[:100]},"timestamp":int(time.time()*1000)})+'\n')
+                    except: pass
+                    # #endregion
+                    continue
+            
+            if not tick_registered:
+                # 如果都失败，至少注册默认的
+                self._event_engine.register(EVENT_TICK, self._on_tick_event)
+                # #region agent log
+                try:
+                    with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"ctp_realtime.py:connect","message":"Using default EVENT_TICK registration","data":{"EVENT_TICK":EVENT_TICK},"timestamp":int(time.time()*1000)})+'\n')
+                except: pass
+                # #endregion
+            
             self._event_engine.register(EVENT_LOG, self._on_log_event)
+            
+            # 尝试注册所有可能的事件类型用于调试
+            all_possible_events = [EVENT_TICK, EVENT_LOG, "eTick", "eTick.", "CTP.eTick", "CTP.eTick.", "tick", "Tick"]
+            for evt in all_possible_events:
+                try:
+                    self._event_engine.register(evt, _debug_all_events)
+                except:
+                    pass
             
             # #region agent log
             try:
                 with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"ctp_realtime.py:connect","message":"Events registered","data":{"EVENT_TICK":EVENT_TICK,"EVENT_LOG":EVENT_LOG},"timestamp":int(time.time()*1000)})+'\n')
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"ctp_realtime.py:connect","message":"Events registered","data":{"EVENT_TICK":EVENT_TICK,"EVENT_LOG":EVENT_LOG,"tick_registered":tick_registered},"timestamp":int(time.time()*1000)})+'\n')
             except: pass
             # #endregion
             
@@ -325,21 +391,88 @@ class CTPRealtimeData:
                 return False
             
             # 创建订阅请求对象
-            subscribe_req = SubscribeRequest(symbol, exchange_enum)
+            # 注意：vnpy-ctp的SubscribeRequest可能需要小写合约代码
+            symbol_normalized = symbol.upper()  # 确保大写
+            subscribe_req = SubscribeRequest(symbol_normalized, exchange_enum)
             
             # #region agent log
             import json
             try:
                 with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"ctp_realtime.py:subscribe","message":"Creating SubscribeRequest","data":{"symbol":symbol,"exchange_str":exchange_str,"exchange_enum":str(exchange_enum),"vt_symbol":subscribe_req.vt_symbol},"timestamp":int(time.time()*1000)})+'\n')
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"ctp_realtime.py:subscribe","message":"Creating SubscribeRequest","data":{"symbol":symbol,"symbol_normalized":symbol_normalized,"exchange_str":exchange_str,"exchange_enum":str(exchange_enum),"vt_symbol":subscribe_req.vt_symbol},"timestamp":int(time.time()*1000)})+'\n')
             except: pass
             # #endregion
+            
+            # 尝试先查询合约信息（如果需要）
+            try:
+                # vnpy-ctp可能需要先查询合约信息
+                from vnpy.trader.object import ContractData
+                from vnpy.trader.constant import Product
+                # 尝试查询合约
+                contract_req = ContractData(
+                    symbol=symbol_normalized,
+                    exchange=exchange_enum,
+                    name="",
+                    product=Product.FUTURES,
+                )
+                # 注意：vnpy-ctp的gateway可能没有直接的query_contract方法
+                # 但订阅时会自动查询合约信息
+            except Exception as contract_error:
+                # #region agent log
+                try:
+                    with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"ctp_realtime.py:subscribe","message":"Contract query attempt","data":{"error":str(contract_error)[:100]},"timestamp":int(time.time()*1000)})+'\n')
+                except: pass
+                # #endregion
+                pass
             
             # 订阅行情
             self._ctp_gateway.subscribe(subscribe_req)
             
+            # #region agent log
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"ctp_realtime.py:subscribe","message":"Subscribe called on gateway","data":{"vt_symbol":subscribe_req.vt_symbol,"gateway_type":type(self._ctp_gateway).__name__},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            
+            # #region agent log
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"ctp_realtime.py:subscribe","message":"Subscribe called","data":{"symbol":symbol,"vt_symbol":subscribe_req.vt_symbol,"gateway_exists":self._ctp_gateway is not None,"event_engine_running":self._event_engine is not None},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            
             self.subscribed_symbols.append(symbol)
             logger.info(f"订阅合约成功: {symbol} ({subscribe_req.vt_symbol})")
+            
+            # 检查交易时间
+            from utils.helpers import is_trading_time
+            current_time = datetime.now()
+            is_trading = is_trading_time(current_time)
+            
+            # #region agent log
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"ctp_realtime.py:subscribe","message":"Trading time check","data":{"symbol":symbol,"current_time":current_time.strftime("%Y-%m-%d %H:%M:%S"),"is_trading_time":is_trading,"environment":self.environment},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            
+            # 等待一小段时间，看是否有Tick数据到达
+            import time as time_module
+            time_module.sleep(2.0)  # 增加等待时间到2秒
+            
+            # #region agent log
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"ctp_realtime.py:subscribe","message":"After subscribe wait","data":{"symbol":symbol,"subscribed_count":len(self.subscribed_symbols),"tick_callbacks":len(self.tick_callbacks)},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            
+            # 如果不在交易时间且不是7x24环境，给出提示
+            if not is_trading and not settings.is_7x24_environment(self.environment):
+                logger.warning(f"当前不在交易时间内，可能无法收到实时行情数据。当前时间: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                logger.info("提示：如需在非交易时间测试，请使用7x24环境（端口40001/40011）")
             
             return True
             
@@ -407,10 +540,33 @@ class CTPRealtimeData:
             event: vnpy事件对象，包含Tick数据
         """
         try:
+            # #region agent log
+            import json
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"TICK","location":"ctp_realtime.py:_on_tick_event","message":"Tick event received","data":{"has_data":hasattr(event,'data'),"event_type":type(event).__name__},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            
             tick_data = event.data
+            
+            # #region agent log
+            try:
+                symbol = tick_data.symbol if hasattr(tick_data, 'symbol') else "UNKNOWN"
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"TICK","location":"ctp_realtime.py:_on_tick_event","message":"Tick data extracted","data":{"symbol":symbol,"tick_type":type(tick_data).__name__},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
             
             # 转换vnpy-ctp Tick数据格式
             tick = self._convert_vnpy_tick_data(tick_data)
+            
+            # #region agent log
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"TICK","location":"ctp_realtime.py:_on_tick_event","message":"Tick converted","data":{"tick_exists":tick is not None,"tick_symbol":tick.symbol if tick else None,"callback_count":len(self.tick_callbacks)},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
             
             if not tick or not self.data_handler.validate_tick(tick):
                 return

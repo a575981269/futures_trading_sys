@@ -87,6 +87,7 @@ class CTPTrader(TradingInterface):
         self.on_order_callback: Optional[Callable[[Order], None]] = None
         self.on_trade_callback: Optional[Callable[[Order], None]] = None
         self.on_position_callback: Optional[Callable[[Position], None]] = None
+        self.on_account_callback: Optional[Callable[[Dict[str, Any]], None]] = None
         
         # 订单引用映射（用于CTP回调）
         self._order_ref_map: Dict[str, str] = {}  # {order_ref: order_id}
@@ -373,14 +374,34 @@ class CTPTrader(TradingInterface):
             # 重置事件
             self._account_query_event.clear()
             
+            # #region agent log
+            import json
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"K","location":"ctp_trader.py:query_account","message":"Calling query_account","data":{"user_id":self.user_id,"has_ctp_api":self._ctp_api is not None},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            
             # 查询账户
             self._ctp_api.query_account()
             
             # 等待查询结果（最多等待5秒）
             if self._account_query_event.wait(timeout=5):
+                # #region agent log
+                try:
+                    with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"K","location":"ctp_trader.py:query_account","message":"Account query success","data":{"account_info":self.account_info},"timestamp":int(time.time()*1000)})+'\n')
+                except: pass
+                # #endregion
                 return self.account_info.copy()
             else:
                 logger.warning("账户查询超时")
+                # #region agent log
+                try:
+                    with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"K","location":"ctp_trader.py:query_account","message":"Account query timeout","data":{"account_info":self.account_info},"timestamp":int(time.time()*1000)})+'\n')
+                except: pass
+                # #endregion
                 return self.account_info.copy() if self.account_info else {}
             
         except Exception as e:
@@ -408,14 +429,34 @@ class CTPTrader(TradingInterface):
             # 重置事件
             self._position_query_event.clear()
             
+            # #region agent log
+            import json
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"M","location":"ctp_trader.py:query_positions","message":"Calling query_position","data":{"has_ctp_api":self._ctp_api is not None},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            
             # 查询持仓
             self._ctp_api.query_position()
             
             # 等待查询结果（最多等待5秒）
             if self._position_query_event.wait(timeout=5):
+                # #region agent log
+                try:
+                    with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"M","location":"ctp_trader.py:query_positions","message":"Position query success","data":{"position_count":len(self.positions)},"timestamp":int(time.time()*1000)})+'\n')
+                except: pass
+                # #endregion
                 return list(self.positions.values())
             else:
                 logger.warning("持仓查询超时")
+                # #region agent log
+                try:
+                    with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                        f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"M","location":"ctp_trader.py:query_positions","message":"Position query timeout","data":{"position_count":len(self.positions)},"timestamp":int(time.time()*1000)})+'\n')
+                except: pass
+                # #endregion
                 return list(self.positions.values())
             
         except Exception as e:
@@ -483,6 +524,10 @@ class CTPTrader(TradingInterface):
     def register_position_callback(self, callback: Callable[[Position], None]):
         """注册持仓回调"""
         self.on_position_callback = callback
+    
+    def register_account_callback(self, callback: Callable[[Dict[str, Any]], None]):
+        """注册账户回调"""
+        self.on_account_callback = callback
     
     def _convert_order_type(self, order_type: OrderType) -> str:
         """转换订单类型为CTP格式"""
@@ -582,6 +627,14 @@ class CTPTrader(TradingInterface):
     def _on_position_callback(self, event):
         """vnpy-ctp 持仓更新回调"""
         try:
+            # #region agent log
+            import json
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"L","location":"ctp_trader.py:_on_position_callback","message":"Position callback triggered","data":{"event_type":type(event).__name__,"has_data":hasattr(event,'data')},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            
             position_data = event.data
             symbol = getattr(position_data, 'symbol', '') if hasattr(position_data, 'symbol') else position_data.get('symbol', '') if isinstance(position_data, dict) else ''
             if not symbol:
@@ -606,7 +659,24 @@ class CTPTrader(TradingInterface):
     def _on_account_callback(self, event):
         """vnpy-ctp 账户更新回调"""
         try:
+            # #region agent log
+            import json
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"J","location":"ctp_trader.py:_on_account_callback","message":"Account callback triggered","data":{"event_type":type(event).__name__,"has_data":hasattr(event,'data'),"data_type":type(event.data).__name__ if hasattr(event,'data') else None},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            
             account_data = event.data
+            
+            # #region agent log
+            try:
+                account_attrs = [attr for attr in dir(account_data) if not attr.startswith('_')] if hasattr(account_data, '__dict__') else []
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"J","location":"ctp_trader.py:_on_account_callback","message":"Account data attributes","data":{"attrs":account_attrs[:10]},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            
             self.account_info = {
                 'balance': float(account_data.balance) if hasattr(account_data, 'balance') else 0.0,
                 'available': float(account_data.available) if hasattr(account_data, 'available') else 0.0,
@@ -615,6 +685,21 @@ class CTPTrader(TradingInterface):
                 'commission': float(account_data.commission) if hasattr(account_data, 'commission') else 0.0,
                 'profit': float(account_data.profit) if hasattr(account_data, 'profit') else 0.0,
             }
+            
+            # #region agent log
+            try:
+                with open(r'c:\Users\lenovo\Desktop\futures_trading_sys\.cursor\debug.log', 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"J","location":"ctp_trader.py:_on_account_callback","message":"Account info updated","data":{"account_info":self.account_info},"timestamp":int(time.time()*1000)})+'\n')
+            except: pass
+            # #endregion
+            
+            # 调用账户回调
+            if self.on_account_callback:
+                try:
+                    self.on_account_callback(self.account_info.copy())
+                except Exception as e:
+                    logger.error(f"账户回调执行失败: {e}")
+            
             self._account_query_event.set()
             
         except Exception as e:

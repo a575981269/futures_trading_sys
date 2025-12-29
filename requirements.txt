@@ -35,3 +35,9 @@ APScheduler>=3.10.0
 # HTTP请求（用于Webhook等）
 requests>=2.31.0
 
+# GUI界面
+PyQt6>=6.6.0
+PyQt6-Qt6>=6.6.0
+pyqtgraph>=0.13.0
+PyInstaller>=6.0.0
+
